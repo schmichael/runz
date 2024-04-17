@@ -29,11 +29,16 @@ func init() {
 			panic(fmt.Sprintf("pipe=> %v", err))
 		}
 
+		// libcontainer expects logs in logrus's json format on the pipe fd
+		// specified by the env var above
 		logrus.SetLevel(logrus.DebugLevel)
 		logrus.SetOutput(os.NewFile(uintptr(logPipeFd), "logpipe"))
 		logrus.SetFormatter(new(logrus.JSONFormatter))
 		logrus.Debug("child process in init()")
 
+		// the following helper performs all kinds of internal libcontainer
+		// operations before eventually exec'ing the final user command. Control is
+		// never returned to this code so the panic below is never reached.
 		factory, _ := libcontainer.New("")
 		if err := factory.StartInitialization(); err != nil {
 			// as the error is sent back to the parent there is no need to log
@@ -48,7 +53,7 @@ func main() {
 	log.Println("main()")
 
 	if os.Getenv("ROOTFS") == "" {
-		log.Println("must set ROOTFS to a linux rootfs")
+		log.Println("must set ROOTFS to a linux rootfs (absolute path)")
 		os.Exit(99)
 	}
 
@@ -59,7 +64,6 @@ func main() {
 	}
 	config := &configs.Config{
 		Rootfs: os.Getenv("ROOTFS"),
-		//Rootfs: "/",
 		Capabilities: &configs.Capabilities{
 			Bounding: []string{
 				"CAP_CHOWN",
@@ -131,6 +135,8 @@ func main() {
 			{Type: configs.NEWUTS},
 			{Type: configs.NEWIPC},
 			{Type: configs.NEWPID},
+			// Commented out because (a) nomad doesn't use a user namespace, and (b)
+			// the runc example code was broken.
 			//{Type: configs.NEWUSER},
 			{Type: configs.NEWNET},
 			{Type: configs.NEWCGROUP},
@@ -209,18 +215,21 @@ func main() {
 		},
 	}
 
+	// Create a container factory
 	factory, err := libcontainer.New("/run/containers", nil)
 	if err != nil {
 		log.Fatalf("New=>", err)
 		return
 	}
 
-	container, err := factory.Create("container-id2", config)
+	// Create a container
+	container, err := factory.Create("container-id", config)
 	if err != nil {
 		log.Fatal("Create=>", err)
 		return
 	}
 
+	// Create the process to run in the container
 	process := &libcontainer.Process{
 		Args:   []string{"/bin/bash", "-c", "echo HELLO123"},
 		Env:    []string{"PATH=/bin"},
@@ -231,11 +240,16 @@ func main() {
 		Init:   true,
 	}
 
+	// Actually run the process in the container. Here is where all the
+	// reexecing happens.
 	if err := container.Run(process); err != nil {
 		container.Destroy()
 		log.Fatal("Run=>", err)
 		return
 	}
+
+	// If you see this once and only once, the init() and nsenter business worked
+	// as expected.
 	log.Println("running!")
 
 	// wait for the process to finish.
