@@ -47,13 +47,18 @@ func init() {
 func main() {
 	log.Println("main()")
 
+	if os.Getenv("ROOTFS") == "" {
+		log.Println("must set ROOTFS to a linux rootfs")
+		os.Exit(99)
+	}
+
 	defaultMountFlags := unix.MS_NOEXEC | unix.MS_NOSUID | unix.MS_NODEV
 	var devices []*devices.Rule
 	for _, device := range specconv.AllowedDevices {
 		devices = append(devices, &device.Rule)
 	}
 	config := &configs.Config{
-		Rootfs: "/home/schmichael/src/runz/ubuntu",
+		Rootfs: os.Getenv("ROOTFS"),
 		//Rootfs: "/",
 		Capabilities: &configs.Capabilities{
 			Bounding: []string{
